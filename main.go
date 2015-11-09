@@ -56,7 +56,7 @@ func main() {
 	if swDir != nil {
 		config := swagger.Config{
 			WebServices:     wsContainer.RegisteredWebServices(), // you control what services are visible
-			WebServicesUrl:  fmt.Sprintf("http://localhost:%u", port),
+			WebServicesUrl:  fmt.Sprintf("http://localhost:%d", port),
 			ApiPath:         "/apidocs.json",
 			ApiVersion:      "0.1",
 			SwaggerPath:     "/apidocs/",
@@ -64,7 +64,7 @@ func main() {
 		swagger.RegisterSwaggerService(config, wsContainer)
 	}
 
-	log.Printf("start listening on localhost:%u", port)
+	log.Printf("start listening on localhost:%d", port)
 	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: wsContainer}
 	log.Fatal(server.ListenAndServe())
 }
