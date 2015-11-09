@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/emicklei/go-restful"
 
@@ -54,6 +56,23 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Reads(model.ProjectTemplate{}).
 		Writes(model.Project{}))
 
+	service2.Route(service2.GET("{project-id}/textures/{texture-id}").To(resource.getTexture).
+		// docs
+		Doc("get texture").
+		Operation("getTexture").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
+		Writes(model.Texture{}))
+
+	service2.Route(service2.PUT("{project-id}/textures/{texture-id}").To(resource.setTexture).
+		// docs
+		Doc("set texture").
+		Operation("setTexture").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
+		Reads(model.TextureProperties{}).
+		Writes(model.Texture{}))
+
 	container.Add(service2)
 
 	return resource
@@ -78,8 +97,8 @@ func (resource *WorkspaceResource) getProjects(request *restful.Request, respons
 	entity.Items = make([]model.Identifiable, len(projectNames))
 	for index, name := range projectNames {
 		proj := &entity.Items[index]
-		proj.Id = name
-		proj.Href = entity.Href + "/" + proj.Id
+		proj.ID = name
+		proj.Href = entity.Href + "/" + proj.ID
 	}
 
 	response.WriteEntity(entity)
@@ -96,7 +115,7 @@ func (resource *WorkspaceResource) createProject(request *restful.Request, respo
 		response.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, prjErr := resource.ws.NewProject(entityTemplate.Id)
+	_, prjErr := resource.ws.NewProject(entityTemplate.ID)
 	if prjErr != nil {
 		response.AddHeader("Content-Type", "text/plain")
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
@@ -104,9 +123,56 @@ func (resource *WorkspaceResource) createProject(request *restful.Request, respo
 	}
 
 	entity := new(model.Project)
-	entity.Id = entityTemplate.Id
-	entity.Href = "/projects/" + entity.Id
+	entity.ID = entityTemplate.ID
+	entity.Href = "/projects/" + entity.ID
 
 	response.WriteHeader(http.StatusCreated)
 	response.WriteEntity(entity)
+}
+
+// GET /projects/{project-id}/textures/{texture-id}
+func (resource *WorkspaceResource) getTexture(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		var entity model.Texture
+
+		entity.Href = "/projects/" + projectId + "/textures/" + fmt.Sprintf("%d", textureId)
+		entity.Properties = project.Textures().Properties(int(textureId))
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// PUT /projects/{project-id}/textures/{texture-id}
+func (resource *WorkspaceResource) setTexture(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		var entity model.Texture
+		err = request.ReadEntity(&entity.Properties)
+		if err != nil {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		entity.Href = "/projects/" + projectId + "/textures/" + fmt.Sprintf("%d", textureId)
+		project.Textures().SetProperties(int(textureId), entity.Properties)
+		entity.Properties = project.Textures().Properties(int(textureId))
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
 }
