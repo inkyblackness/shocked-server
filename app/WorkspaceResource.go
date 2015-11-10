@@ -5,8 +5,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"image/color"
+	"image/png"
+
 	"github.com/emicklei/go-restful"
 
+	"github.com/inkyblackness/res/image"
 	core "github.com/inkyblackness/shocked-core"
 	model "github.com/inkyblackness/shocked-model"
 )
@@ -72,6 +76,24 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
 		Reads(model.TextureProperties{}).
 		Writes(model.Texture{}))
+
+	service2.Route(service2.GET("{project-id}/textures/{texture-id}/{texture-size}").To(resource.getTextureImage).
+		// docs
+		Doc("get texture image").
+		Operation("getTextureImage").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
+		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
+		Writes(model.Image{}))
+
+	service2.Route(service2.GET("{project-id}/textures/{texture-id}/{texture-size}/png").To(resource.getTextureImageExport).
+		// docs
+		Doc("get texture image as PNG").
+		Operation("getTextureImageExport").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
+		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
+		Produces("image/png"))
 
 	container.Add(service2)
 
@@ -141,6 +163,9 @@ func (resource *WorkspaceResource) getTexture(request *restful.Request, response
 
 		entity.Href = "/projects/" + projectId + "/textures/" + fmt.Sprintf("%d", textureId)
 		entity.Properties = project.Textures().Properties(int(textureId))
+		for _, size := range model.TextureSizes() {
+			entity.Images = append(entity.Images, model.Link{Rel: string(size), Href: entity.Href + "/" + string(size)})
+		}
 
 		response.WriteEntity(entity)
 	} else {
@@ -170,6 +195,59 @@ func (resource *WorkspaceResource) setTexture(request *restful.Request, response
 		entity.Properties = project.Textures().Properties(int(textureId))
 
 		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/textures/{texture-id}/{texture-size}
+func (resource *WorkspaceResource) getTextureImage(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureSize := request.PathParameter("texture-size")
+		var entity model.Image
+
+		entity.Href = "/projects/" + projectId + "/textures/" + fmt.Sprintf("%d", textureId) + "/" + textureSize
+		bmp := project.Textures().Image(int(textureId), model.TextureSize(textureSize))
+		hotspot := bmp.Hotspot()
+
+		entity.Properties.HotspotLeft = hotspot.Min.X
+		entity.Properties.HotspotTop = hotspot.Min.Y
+		entity.Properties.HotspotRight = hotspot.Max.X
+		entity.Properties.HotspotBottom = hotspot.Max.Y
+
+		entity.Formats = []model.Link{model.Link{Rel: "png", Href: entity.Href + "/png"}}
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/textures/{texture-id}/{texture-size}/png
+func (resource *WorkspaceResource) getTextureImageExport(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureSize := request.PathParameter("texture-size")
+		var palette color.Palette
+
+		bmp := project.Textures().Image(int(textureId), model.TextureSize(textureSize))
+		palette, err = project.Palettes().GamePalette()
+		image := image.FromBitmap(bmp, palette)
+
+		response.AddHeader("Content-Type", "image/png")
+		png.Encode(response.ResponseWriter, image)
+
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
