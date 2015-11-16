@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 
 	"github.com/docopt/docopt-go"
 	"github.com/emicklei/go-restful"
@@ -18,17 +19,32 @@ func usage() string {
 	return app.Title + `
 
 Usage:
-	shocked-server --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>]
+	shocked-server --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>] [--client=<clientdir>]
 	shocked-server -h | --help
 	shocked-server --version
 
 Options:
-	-h --help            Show this screen.
-	--version            Show version.
-	--source=<srcdir>    A path pointing to the root of a System Shock source directory
-	--projects=<prjdir>  A path pointing to a directory containing the projects
-	--swagger=<swdir>    An optional path pointing to the Swagger UI resources
+	-h --help             Show this screen.
+	--version             Show version.
+	--source=<srcdir>     A path pointing to the root of a System Shock source directory
+	--projects=<prjdir>   A path pointing to a directory containing the projects
+	--swagger=<swdir>     An optional path pointing to the Swagger UI resources
+	--client=<clientdir>  An optional path pointing to the client directory
 `
+}
+
+func serveClient(container *restful.Container, localPath string) {
+	rootDir := localPath
+
+	handleRequest := func(req *restful.Request, resp *restful.Response) {
+		actual := path.Join(rootDir, req.PathParameter("subpath"))
+		http.ServeFile(resp.ResponseWriter, req.Request, actual)
+	}
+
+	ws := new(restful.WebService)
+	ws.Route(ws.GET("/client/{subpath:*}").To(handleRequest))
+	container.Add(ws)
+	log.Printf("Client added from ", localPath)
 }
 
 func main() {
@@ -51,6 +67,11 @@ func main() {
 	wsContainer := restful.NewContainer()
 
 	app.NewWorkspaceResource(wsContainer, workspace)
+
+	clientDir := arguments["--client"]
+	if clientDir != nil {
+		serveClient(wsContainer, clientDir.(string))
+	}
 
 	swDir := arguments["--swagger"]
 	if swDir != nil {
