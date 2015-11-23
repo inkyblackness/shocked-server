@@ -95,7 +95,14 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
 		Produces("image/png"))
 
-	service2.Route(service2.GET("{project-id}/archive/level/{level-id}").To(resource.getLevel).
+	service2.Route(service2.GET("{project-id}/archive/levels").To(resource.getLevels).
+		// docs
+		Doc("get level list").
+		Operation("getLevels").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Writes(model.Levels{}))
+
+	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}").To(resource.getLevel).
 		// docs
 		Doc("get level information").
 		Operation("getLevel").
@@ -103,7 +110,7 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
 		Writes(model.Level{}))
 
-	service2.Route(service2.GET("{project-id}/archive/level/{level-id}/textures").To(resource.getLevelTextures).
+	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/textures").To(resource.getLevelTextures).
 		// docs
 		Doc("get level textures").
 		Operation("getLevelTextures").
@@ -111,7 +118,7 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
 		Writes(model.LevelTextures{}))
 
-	service2.Route(service2.GET("{project-id}/archive/level/{level-id}/tiles").To(resource.getLevelTiles).
+	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/tiles").To(resource.getLevelTiles).
 		// docs
 		Doc("get level tiles").
 		Operation("getLevelTiles").
@@ -119,7 +126,7 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
 		Writes(model.Tiles{}))
 
-	service2.Route(service2.GET("{project-id}/archive/level/{level-id}/tiles/{y}/{x}").To(resource.getLevelTile).
+	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/tiles/{y}/{x}").To(resource.getLevelTile).
 		// docs
 		Doc("get level tile").
 		Operation("getLevelTile").
@@ -129,7 +136,7 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("x", "X coordinate of the tile").DataType("int")).
 		Writes(model.Tile{}))
 
-	service2.Route(service2.PUT("{project-id}/archive/level/{level-id}/tiles/{y}/{x}").To(resource.setLevelTile).
+	service2.Route(service2.PUT("{project-id}/archive/levels/{level-id}/tiles/{y}/{x}").To(resource.setLevelTile).
 		// docs
 		Doc("set level tile").
 		Operation("setLevelTile").
@@ -297,6 +304,33 @@ func (resource *WorkspaceResource) getTextureImageExport(request *restful.Reques
 		response.AddHeader("Content-Type", "image/png")
 		png.Encode(response.ResponseWriter, image)
 
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/archive/levels
+func (resource *WorkspaceResource) getLevels(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		var entity model.Levels
+
+		entity.Href = "/projects/" + projectId + "/archive/levels"
+		levelIDs := project.Archive().LevelIDs()
+
+		for _, id := range levelIDs {
+			var entry model.Identifiable
+
+			entry.ID = fmt.Sprintf("%d", id)
+			entry.Href = entity.Href + "/" + entry.ID
+			entity.Items = append(entity.Items, entry)
+		}
+
+		response.WriteEntity(entity)
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
