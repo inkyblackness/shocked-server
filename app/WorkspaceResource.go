@@ -129,6 +129,17 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("x", "X coordinate of the tile").DataType("int")).
 		Writes(model.Tile{}))
 
+	service2.Route(service2.PUT("{project-id}/archive/level/{level-id}/tiles/{y}/{x}").To(resource.setLevelTile).
+		// docs
+		Doc("set level tile").
+		Operation("setLevelTile").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
+		Param(service2.PathParameter("y", "Y coordinate of the tile").DataType("int")).
+		Param(service2.PathParameter("x", "X coordinate of the tile").DataType("int")).
+		Reads(model.TileProperties{}).
+		Writes(model.Tile{}))
+
 	container.Add(service2)
 
 	return resource
@@ -389,6 +400,34 @@ func (resource *WorkspaceResource) getLevelTile(request *restful.Request, respon
 		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
 		level := project.Archive().Level(int(levelId))
 
+		response.WriteEntity(getLevelTileEntity(project, level, int(x), int(y)))
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// PUT /projects/{project-id}/archive/levels/{level-id}/tiles/{y}/{x}
+func (resource *WorkspaceResource) setLevelTile(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		x, _ := strconv.ParseInt(request.PathParameter("x"), 10, 16)
+		y, _ := strconv.ParseInt(request.PathParameter("y"), 10, 16)
+		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelId))
+
+		var properties model.TileProperties
+		err = request.ReadEntity(&properties)
+		if err != nil {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		level.SetTileProperties(int(x), int(y), properties)
 		response.WriteEntity(getLevelTileEntity(project, level, int(x), int(y)))
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
