@@ -147,6 +147,14 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Reads(model.TileProperties{}).
 		Writes(model.Tile{}))
 
+	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/objects").To(resource.getLevelObjects).
+		// docs
+		Doc("get level objects").
+		Operation("getLevelObjects").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
+		Writes(model.LevelObjects{}))
+
 	container.Add(service2)
 
 	return resource
@@ -463,6 +471,31 @@ func (resource *WorkspaceResource) setLevelTile(request *restful.Request, respon
 
 		level.SetTileProperties(int(x), int(y), properties)
 		response.WriteEntity(getLevelTileEntity(project, level, int(x), int(y)))
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/archive/levels/{level-id}/objects
+func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelId))
+		hrefBase := "/projects/" + projectId + "/archive/levels/" + fmt.Sprintf("%d", levelId) + "/objects/"
+		var entity model.LevelObjects
+
+		entity.Table = level.Objects()
+		for i := 0; i < len(entity.Table); i++ {
+			entry := &entity.Table[i]
+			entry.Href = hrefBase + entry.ID
+		}
+
+		response.WriteEntity(entity)
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
