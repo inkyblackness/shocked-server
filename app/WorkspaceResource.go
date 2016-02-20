@@ -10,6 +10,7 @@ import (
 
 	"github.com/emicklei/go-restful"
 
+	"github.com/inkyblackness/res"
 	"github.com/inkyblackness/res/image"
 	core "github.com/inkyblackness/shocked-core"
 	model "github.com/inkyblackness/shocked-model"
@@ -94,6 +95,16 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
 		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
 		Produces("image/png"))
+
+	service2.Route(service2.GET("{project-id}/objects/{class}/{subclass}/{type}").To(resource.getGameObject).
+		// docs
+		Doc("get game object").
+		Operation("getGameObject").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("class", "identifier of the class").DataType("int")).
+		Param(service2.PathParameter("subclass", "identifier of the class").DataType("int")).
+		Param(service2.PathParameter("type", "identifier of the class").DataType("int")).
+		Writes(model.GameObject{}))
 
 	service2.Route(service2.GET("{project-id}/archive/levels").To(resource.getLevels).
 		// docs
@@ -187,8 +198,6 @@ func (resource *WorkspaceResource) getProjects(request *restful.Request, respons
 }
 
 // POST /projects
-// <User><Name>Melissa</Name></User>
-//
 func (resource *WorkspaceResource) createProject(request *restful.Request, response *restful.Response) {
 	entityTemplate := new(model.ProjectTemplate)
 	err := request.ReadEntity(entityTemplate)
@@ -493,6 +502,10 @@ func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, res
 		for i := 0; i < len(entity.Table); i++ {
 			entry := &entity.Table[i]
 			entry.Href = hrefBase + entry.ID
+
+			entry.Links = append(entry.Links, model.Link{
+				Rel:  "static",
+				Href: "/projects/" + projectId + "/objects/" + fmt.Sprintf("%d/%d/%d", entry.Class, entry.Subclass, entry.Type)})
 		}
 
 		response.WriteEntity(entity)
@@ -501,4 +514,32 @@ func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, res
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
 		return
 	}
+}
+
+// GET /projects/{project-id}/objects/{class}/{subclass}/{type}
+func (resource *WorkspaceResource) getGameObject(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		classId, _ := strconv.ParseInt(request.PathParameter("class"), 10, 8)
+		subclassId, _ := strconv.ParseInt(request.PathParameter("subclass"), 10, 8)
+		typeId, _ := strconv.ParseInt(request.PathParameter("type"), 10, 8)
+		objId := res.MakeObjectID(res.ObjectClass(classId), res.ObjectSubclass(subclassId), res.ObjectType(typeId))
+		entity := resource.objectEntity(project, objId)
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+func (resource *WorkspaceResource) objectEntity(project *core.Project, objId res.ObjectID) (entity model.GameObject) {
+	entity.ID = fmt.Sprintf("%d/%d/%d", objId.Class, objId.Subclass, objId.Type)
+	entity.Href = "/projects/" + project.Name() + "/objects/" + entity.ID
+	entity.Properties = project.GameObjects().Properties(objId)
+
+	return
 }
