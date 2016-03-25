@@ -61,6 +61,13 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Reads(model.ProjectTemplate{}).
 		Writes(model.Project{}))
 
+	service2.Route(service2.GET("{project-id}/textures").To(resource.getTextures).
+		// docs
+		Doc("get textures").
+		Operation("getTextures").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Writes(model.Textures{}))
+
 	service2.Route(service2.GET("{project-id}/textures/{texture-id}").To(resource.getTexture).
 		// docs
 		Doc("get texture").
@@ -127,6 +134,15 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Operation("getLevelTextures").
 		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
+		Writes(model.LevelTextures{}))
+
+	service2.Route(service2.PUT("{project-id}/archive/levels/{level-id}/textures").To(resource.setLevelTextures).
+		// docs
+		Doc("put level textures").
+		Operation("setLevelTextures").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
+		Reads([]string{}).
 		Writes(model.LevelTextures{}))
 
 	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/tiles").To(resource.getLevelTiles).
@@ -219,6 +235,29 @@ func (resource *WorkspaceResource) createProject(request *restful.Request, respo
 
 	response.WriteHeader(http.StatusCreated)
 	response.WriteEntity(entity)
+}
+
+// GET /projects/{project-id}/textures
+func (resource *WorkspaceResource) getTextures(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		textures := project.Textures()
+		limit := textures.TextureCount()
+		var entity model.Textures
+
+		entity.List = make([]model.Texture, limit)
+		for id := 0; id < limit; id++ {
+			entity.List[id] = resource.textureEntity(project, id)
+		}
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
 }
 
 // GET /projects/{project-id}/textures/{texture-id}
@@ -390,14 +429,52 @@ func (resource *WorkspaceResource) getLevelTextures(request *restful.Request, re
 
 	if err == nil {
 		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		var entity model.LevelTextures
-
-		entity.Href = "/projects/" + projectId + "/archive/levels/" + fmt.Sprintf("%d", levelId) + "/textures"
 		level := project.Archive().Level(int(levelId))
-		for _, id := range level.Textures() {
-			entity.IDs = append(entity.IDs, fmt.Sprintf("%d", id))
+		entity := resource.getLevelTexturesEntity(projectId, level)
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+func (resource *WorkspaceResource) getLevelTexturesEntity(projectId string, level *core.Level) (entity model.LevelTextures) {
+	entity.Href = "/projects/" + projectId + "/archive/levels/" + fmt.Sprintf("%d", level.ID()) + "/textures"
+	for _, id := range level.Textures() {
+		entity.IDs = append(entity.IDs, fmt.Sprintf("%d", id))
+	}
+
+	return
+}
+
+// PUT /projects/{project-id}/archive/levels/{level-id}/textures
+func (resource *WorkspaceResource) setLevelTextures(request *restful.Request, response *restful.Response) {
+	projectId := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectId)
+
+	if err == nil {
+		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+
+		var idStrings []string
+		err = request.ReadEntity(&idStrings)
+		if err != nil {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusInternalServerError, err.Error())
+			return
 		}
 
+		newIds := make([]int, len(idStrings))
+		for index, idString := range idStrings {
+			parsedId, _ := strconv.ParseInt(idString, 10, 16)
+			newIds[index] = int(parsedId)
+		}
+
+		level := project.Archive().Level(int(levelId))
+		level.SetTextures(newIds)
+
+		entity := resource.getLevelTexturesEntity(projectId, level)
 		response.WriteEntity(entity)
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
