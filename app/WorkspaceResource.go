@@ -374,16 +374,14 @@ func (resource *WorkspaceResource) getLevels(request *restful.Request, response 
 
 	if err == nil {
 		var entity model.Levels
+		archive := project.Archive()
+		levelIDs := archive.LevelIDs()
 
 		entity.Href = "/projects/" + projectId + "/archive/levels"
-		levelIDs := project.Archive().LevelIDs()
-
 		for _, id := range levelIDs {
-			var entry model.Identifiable
+			entry := resource.getLevelEntity(project, archive, id)
 
-			entry.ID = fmt.Sprintf("%d", id)
-			entry.Href = entity.Href + "/" + entry.ID
-			entity.Items = append(entity.Items, entry)
+			entity.List = append(entity.List, entry)
 		}
 
 		response.WriteEntity(entity)
@@ -401,18 +399,7 @@ func (resource *WorkspaceResource) getLevel(request *restful.Request, response *
 
 	if err == nil {
 		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		var entity model.Level
-
-		entity.ID = fmt.Sprintf("%d", levelId)
-		entity.Href = "/projects/" + projectId + "/archive/levels/" + entity.ID
-		level := project.Archive().Level(int(levelId))
-		entity.Properties = level.Properties()
-
-		entity.Links = []model.Link{}
-		entity.Links = append(entity.Links, model.Link{Rel: "tiles", Href: entity.Href + "/tiles/{y}/{x}"})
-		if !entity.Properties.CyberspaceFlag {
-			entity.Links = append(entity.Links, model.Link{Rel: "textures", Href: entity.Href + "/textures"})
-		}
+		entity := resource.getLevelEntity(project, project.Archive(), int(levelId))
 
 		response.WriteEntity(entity)
 	} else {
@@ -420,6 +407,21 @@ func (resource *WorkspaceResource) getLevel(request *restful.Request, response *
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
 		return
 	}
+}
+
+func (resource *WorkspaceResource) getLevelEntity(project *core.Project, archive *core.Archive, levelId int) (entity model.Level) {
+	entity.ID = fmt.Sprintf("%d", levelId)
+	entity.Href = "/projects/" + project.Name() + "/archive/levels/" + entity.ID
+	level := archive.Level(levelId)
+	entity.Properties = level.Properties()
+
+	entity.Links = []model.Link{}
+	entity.Links = append(entity.Links, model.Link{Rel: "tiles", Href: entity.Href + "/tiles/{y}/{x}"})
+	if !entity.Properties.CyberspaceFlag {
+		entity.Links = append(entity.Links, model.Link{Rel: "textures", Href: entity.Href + "/textures"})
+	}
+
+	return
 }
 
 // GET /projects/{project-id}/archive/levels/{level-id}/textures
