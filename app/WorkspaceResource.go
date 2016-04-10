@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,10 +17,12 @@ import (
 	model "github.com/inkyblackness/shocked-model"
 )
 
+// WorkspaceResource handles all requests for a workspace.
 type WorkspaceResource struct {
 	ws *core.Workspace
 }
 
+// NewWorkspaceResource returns a new workspace resource instance.
 func NewWorkspaceResource(container *restful.Container, workspace *core.Workspace) *WorkspaceResource {
 	resource := &WorkspaceResource{
 		ws: workspace}
@@ -61,6 +64,14 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Reads(model.ProjectTemplate{}).
 		Writes(model.Project{}))
 
+	service2.Route(service2.GET("{project-id}/palettes/{palette-id}").To(resource.getPalette).
+		// docs
+		Doc("get palette").
+		Operation("getPalette").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("palette-id", "identifier of the palette").DataType("string")).
+		Writes(model.Palette{}))
+
 	service2.Route(service2.GET("{project-id}/textures").To(resource.getTextures).
 		// docs
 		Doc("get textures").
@@ -94,10 +105,19 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
 		Writes(model.Image{}))
 
-	service2.Route(service2.GET("{project-id}/textures/{texture-id}/{texture-size}/png").To(resource.getTextureImageExport).
+	service2.Route(service2.GET("{project-id}/textures/{texture-id}/{texture-size}/raw").To(resource.getTextureImageAsRaw).
+		// docs
+		Doc("get texture image as raw bitmap").
+		Operation("getTextureImageAsRaw").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
+		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
+		Writes(model.RawBitmap{}))
+
+	service2.Route(service2.GET("{project-id}/textures/{texture-id}/{texture-size}/png").To(resource.getTextureImageAsPng).
 		// docs
 		Doc("get texture image as PNG").
-		Operation("getTextureImageExport").
+		Operation("getTextureImageAsPng").
 		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
 		Param(service2.PathParameter("texture-id", "identifier of the texture").DataType("int")).
 		Param(service2.PathParameter("texture-size", "Size of the texture").DataType("string")).
@@ -237,10 +257,48 @@ func (resource *WorkspaceResource) createProject(request *restful.Request, respo
 	response.WriteEntity(entity)
 }
 
+// GET /projects/{project-id}/palettes/{palette-id}
+func (resource *WorkspaceResource) getPalette(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
+
+	if err == nil {
+		paletteID := request.PathParameter("palette-id")
+		var palette color.Palette
+
+		palette, err = project.Palettes().GamePalette()
+
+		if paletteID == "game" && err == nil {
+			var entity model.Palette
+
+			resource.encodePalette(&entity.Colors, palette)
+			response.WriteEntity(entity)
+		} else {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusBadRequest, "Unknown palette")
+		}
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+func (resource *WorkspaceResource) encodePalette(out *[256]model.Color, palette color.Palette) {
+	for index, inColor := range palette {
+		outColor := &out[index]
+		r, g, b, _ := inColor.RGBA()
+
+		outColor.Red = int(r >> 8)
+		outColor.Green = int(g >> 8)
+		outColor.Blue = int(b >> 8)
+	}
+}
+
 // GET /projects/{project-id}/textures
 func (resource *WorkspaceResource) getTextures(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
 		textures := project.Textures()
@@ -262,12 +320,12 @@ func (resource *WorkspaceResource) getTextures(request *restful.Request, respons
 
 // GET /projects/{project-id}/textures/{texture-id}
 func (resource *WorkspaceResource) getTexture(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
-		entity := resource.textureEntity(project, int(textureId))
+		textureID, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		entity := resource.textureEntity(project, int(textureID))
 
 		response.WriteEntity(entity)
 	} else {
@@ -279,11 +337,11 @@ func (resource *WorkspaceResource) getTexture(request *restful.Request, response
 
 // PUT /projects/{project-id}/textures/{texture-id}
 func (resource *WorkspaceResource) setTexture(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureID, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
 		var properties model.TextureProperties
 		err = request.ReadEntity(&properties)
 		if err != nil {
@@ -292,8 +350,8 @@ func (resource *WorkspaceResource) setTexture(request *restful.Request, response
 			return
 		}
 
-		project.Textures().SetProperties(int(textureId), properties)
-		entity := resource.textureEntity(project, int(textureId))
+		project.Textures().SetProperties(int(textureID), properties)
+		entity := resource.textureEntity(project, int(textureID))
 
 		response.WriteEntity(entity)
 	} else {
@@ -303,10 +361,10 @@ func (resource *WorkspaceResource) setTexture(request *restful.Request, response
 	}
 }
 
-func (resource *WorkspaceResource) textureEntity(project *core.Project, textureId int) (entity model.Texture) {
-	entity.ID = fmt.Sprintf("%d", textureId)
+func (resource *WorkspaceResource) textureEntity(project *core.Project, textureID int) (entity model.Texture) {
+	entity.ID = fmt.Sprintf("%d", textureID)
 	entity.Href = "/projects/" + project.Name() + "/textures/" + entity.ID
-	entity.Properties = project.Textures().Properties(textureId)
+	entity.Properties = project.Textures().Properties(textureID)
 	for _, size := range model.TextureSizes() {
 		entity.Images = append(entity.Images, model.Link{Rel: string(size), Href: entity.Href + "/" + string(size)})
 	}
@@ -316,16 +374,16 @@ func (resource *WorkspaceResource) textureEntity(project *core.Project, textureI
 
 // GET /projects/{project-id}/textures/{texture-id}/{texture-size}
 func (resource *WorkspaceResource) getTextureImage(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureID, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
 		textureSize := request.PathParameter("texture-size")
 		var entity model.Image
 
-		entity.Href = "/projects/" + projectId + "/textures/" + fmt.Sprintf("%d", textureId) + "/" + textureSize
-		bmp := project.Textures().Image(int(textureId), model.TextureSize(textureSize))
+		entity.Href = "/projects/" + projectID + "/textures/" + fmt.Sprintf("%d", textureID) + "/" + textureSize
+		bmp := project.Textures().Image(int(textureID), model.TextureSize(textureSize))
 		hotspot := bmp.Hotspot()
 
 		entity.Properties.HotspotLeft = hotspot.Min.X
@@ -334,6 +392,35 @@ func (resource *WorkspaceResource) getTextureImage(request *restful.Request, res
 		entity.Properties.HotspotBottom = hotspot.Max.Y
 
 		entity.Formats = []model.Link{model.Link{Rel: "png", Href: entity.Href + "/png"}}
+		entity.Formats = []model.Link{model.Link{Rel: "raw", Href: entity.Href + "/raw"}}
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/textures/{texture-id}/{texture-size}/raw
+func (resource *WorkspaceResource) getTextureImageAsRaw(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
+
+	if err == nil {
+		textureID, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureSize := request.PathParameter("texture-size")
+		bmp := project.Textures().Image(int(textureID), model.TextureSize(textureSize))
+		var entity model.RawBitmap
+
+		entity.Width = int(bmp.ImageWidth())
+		entity.Height = int(bmp.ImageHeight())
+		var pixel []byte
+
+		for row := 0; row < entity.Height; row++ {
+			pixel = append(pixel, bmp.Row(row)...)
+		}
+		entity.Pixel = base64.StdEncoding.EncodeToString(pixel)
 
 		response.WriteEntity(entity)
 	} else {
@@ -344,16 +431,16 @@ func (resource *WorkspaceResource) getTextureImage(request *restful.Request, res
 }
 
 // GET /projects/{project-id}/textures/{texture-id}/{texture-size}/png
-func (resource *WorkspaceResource) getTextureImageExport(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+func (resource *WorkspaceResource) getTextureImageAsPng(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		textureId, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
+		textureID, _ := strconv.ParseInt(request.PathParameter("texture-id"), 10, 16)
 		textureSize := request.PathParameter("texture-size")
 		var palette color.Palette
 
-		bmp := project.Textures().Image(int(textureId), model.TextureSize(textureSize))
+		bmp := project.Textures().Image(int(textureID), model.TextureSize(textureSize))
 		palette, err = project.Palettes().GamePalette()
 		image := image.FromBitmap(bmp, palette)
 
@@ -369,15 +456,15 @@ func (resource *WorkspaceResource) getTextureImageExport(request *restful.Reques
 
 // GET /projects/{project-id}/archive/levels
 func (resource *WorkspaceResource) getLevels(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
 		var entity model.Levels
 		archive := project.Archive()
 		levelIDs := archive.LevelIDs()
 
-		entity.Href = "/projects/" + projectId + "/archive/levels"
+		entity.Href = "/projects/" + projectID + "/archive/levels"
 		for _, id := range levelIDs {
 			entry := resource.getLevelEntity(project, archive, id)
 
@@ -394,12 +481,12 @@ func (resource *WorkspaceResource) getLevels(request *restful.Request, response 
 
 // GET /projects/{project-id}/archive/levels/{level-id}
 func (resource *WorkspaceResource) getLevel(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		entity := resource.getLevelEntity(project, project.Archive(), int(levelId))
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		entity := resource.getLevelEntity(project, project.Archive(), int(levelID))
 
 		response.WriteEntity(entity)
 	} else {
@@ -409,10 +496,10 @@ func (resource *WorkspaceResource) getLevel(request *restful.Request, response *
 	}
 }
 
-func (resource *WorkspaceResource) getLevelEntity(project *core.Project, archive *core.Archive, levelId int) (entity model.Level) {
-	entity.ID = fmt.Sprintf("%d", levelId)
+func (resource *WorkspaceResource) getLevelEntity(project *core.Project, archive *core.Archive, levelID int) (entity model.Level) {
+	entity.ID = fmt.Sprintf("%d", levelID)
 	entity.Href = "/projects/" + project.Name() + "/archive/levels/" + entity.ID
-	level := archive.Level(levelId)
+	level := archive.Level(levelID)
 	entity.Properties = level.Properties()
 
 	entity.Links = []model.Link{}
@@ -426,13 +513,13 @@ func (resource *WorkspaceResource) getLevelEntity(project *core.Project, archive
 
 // GET /projects/{project-id}/archive/levels/{level-id}/textures
 func (resource *WorkspaceResource) getLevelTextures(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		level := project.Archive().Level(int(levelId))
-		entity := resource.getLevelTexturesEntity(projectId, level)
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
+		entity := resource.getLevelTexturesEntity(projectID, level)
 
 		response.WriteEntity(entity)
 	} else {
@@ -442,22 +529,20 @@ func (resource *WorkspaceResource) getLevelTextures(request *restful.Request, re
 	}
 }
 
-func (resource *WorkspaceResource) getLevelTexturesEntity(projectId string, level *core.Level) (entity model.LevelTextures) {
-	entity.Href = "/projects/" + projectId + "/archive/levels/" + fmt.Sprintf("%d", level.ID()) + "/textures"
-	for _, id := range level.Textures() {
-		entity.IDs = append(entity.IDs, fmt.Sprintf("%d", id))
-	}
+func (resource *WorkspaceResource) getLevelTexturesEntity(projectID string, level *core.Level) (entity model.LevelTextures) {
+	entity.Href = "/projects/" + projectID + "/archive/levels/" + fmt.Sprintf("%d", level.ID()) + "/textures"
+	entity.IDs = level.Textures()
 
 	return
 }
 
 // PUT /projects/{project-id}/archive/levels/{level-id}/textures
 func (resource *WorkspaceResource) setLevelTextures(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
 
 		var idStrings []string
 		err = request.ReadEntity(&idStrings)
@@ -469,14 +554,14 @@ func (resource *WorkspaceResource) setLevelTextures(request *restful.Request, re
 
 		newIds := make([]int, len(idStrings))
 		for index, idString := range idStrings {
-			parsedId, _ := strconv.ParseInt(idString, 10, 16)
-			newIds[index] = int(parsedId)
+			parsedID, _ := strconv.ParseInt(idString, 10, 16)
+			newIds[index] = int(parsedID)
 		}
 
-		level := project.Archive().Level(int(levelId))
+		level := project.Archive().Level(int(levelID))
 		level.SetTextures(newIds)
 
-		entity := resource.getLevelTexturesEntity(projectId, level)
+		entity := resource.getLevelTexturesEntity(projectID, level)
 		response.WriteEntity(entity)
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
@@ -487,12 +572,12 @@ func (resource *WorkspaceResource) setLevelTextures(request *restful.Request, re
 
 // GET /projects/{project-id}/archive/levels/{level-id}/tiles
 func (resource *WorkspaceResource) getLevelTiles(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		level := project.Archive().Level(int(levelId))
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
 		var entity model.Tiles
 
 		entity.Table = make([][]model.Tile, 64)
@@ -521,14 +606,14 @@ func getLevelTileEntity(project *core.Project, level *core.Level, x int, y int) 
 
 // GET /projects/{project-id}/archive/levels/{level-id}/tiles/{y}/{x}
 func (resource *WorkspaceResource) getLevelTile(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
 		x, _ := strconv.ParseInt(request.PathParameter("x"), 10, 16)
 		y, _ := strconv.ParseInt(request.PathParameter("y"), 10, 16)
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		level := project.Archive().Level(int(levelId))
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
 
 		response.WriteEntity(getLevelTileEntity(project, level, int(x), int(y)))
 	} else {
@@ -540,14 +625,14 @@ func (resource *WorkspaceResource) getLevelTile(request *restful.Request, respon
 
 // PUT /projects/{project-id}/archive/levels/{level-id}/tiles/{y}/{x}
 func (resource *WorkspaceResource) setLevelTile(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
 		x, _ := strconv.ParseInt(request.PathParameter("x"), 10, 16)
 		y, _ := strconv.ParseInt(request.PathParameter("y"), 10, 16)
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		level := project.Archive().Level(int(levelId))
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
 
 		var properties model.TileProperties
 		err = request.ReadEntity(&properties)
@@ -568,13 +653,13 @@ func (resource *WorkspaceResource) setLevelTile(request *restful.Request, respon
 
 // GET /projects/{project-id}/archive/levels/{level-id}/objects
 func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		levelId, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
-		level := project.Archive().Level(int(levelId))
-		hrefBase := "/projects/" + projectId + "/archive/levels/" + fmt.Sprintf("%d", levelId) + "/objects/"
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
+		hrefBase := "/projects/" + projectID + "/archive/levels/" + fmt.Sprintf("%d", levelID) + "/objects/"
 		var entity model.LevelObjects
 
 		entity.Table = level.Objects()
@@ -584,7 +669,7 @@ func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, res
 
 			entry.Links = append(entry.Links, model.Link{
 				Rel:  "static",
-				Href: "/projects/" + projectId + "/objects/" + fmt.Sprintf("%d/%d/%d", entry.Class, entry.Subclass, entry.Type)})
+				Href: "/projects/" + projectID + "/objects/" + fmt.Sprintf("%d/%d/%d", entry.Class, entry.Subclass, entry.Type)})
 		}
 
 		response.WriteEntity(entity)
@@ -597,15 +682,15 @@ func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, res
 
 // GET /projects/{project-id}/objects/{class}/{subclass}/{type}
 func (resource *WorkspaceResource) getGameObject(request *restful.Request, response *restful.Response) {
-	projectId := request.PathParameter("project-id")
-	project, err := resource.ws.Project(projectId)
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
 
 	if err == nil {
-		classId, _ := strconv.ParseInt(request.PathParameter("class"), 10, 8)
-		subclassId, _ := strconv.ParseInt(request.PathParameter("subclass"), 10, 8)
-		typeId, _ := strconv.ParseInt(request.PathParameter("type"), 10, 8)
-		objId := res.MakeObjectID(res.ObjectClass(classId), res.ObjectSubclass(subclassId), res.ObjectType(typeId))
-		entity := resource.objectEntity(project, objId)
+		classID, _ := strconv.ParseInt(request.PathParameter("class"), 10, 8)
+		subclassID, _ := strconv.ParseInt(request.PathParameter("subclass"), 10, 8)
+		typeID, _ := strconv.ParseInt(request.PathParameter("type"), 10, 8)
+		objID := res.MakeObjectID(res.ObjectClass(classID), res.ObjectSubclass(subclassID), res.ObjectType(typeID))
+		entity := resource.objectEntity(project, objID)
 
 		response.WriteEntity(entity)
 	} else {
@@ -615,10 +700,10 @@ func (resource *WorkspaceResource) getGameObject(request *restful.Request, respo
 	}
 }
 
-func (resource *WorkspaceResource) objectEntity(project *core.Project, objId res.ObjectID) (entity model.GameObject) {
-	entity.ID = fmt.Sprintf("%d/%d/%d", objId.Class, objId.Subclass, objId.Type)
+func (resource *WorkspaceResource) objectEntity(project *core.Project, objID res.ObjectID) (entity model.GameObject) {
+	entity.ID = fmt.Sprintf("%d/%d/%d", objID.Class, objID.Subclass, objID.Type)
 	entity.Href = "/projects/" + project.Name() + "/objects/" + entity.ID
-	entity.Properties = project.GameObjects().Properties(objId)
+	entity.Properties = project.GameObjects().Properties(objID)
 
 	return
 }
