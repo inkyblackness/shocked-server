@@ -19,7 +19,7 @@ func usage() string {
 	return app.Title + `
 
 Usage:
-	shocked-server --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>] [--client=<clientdir>]
+	shocked-server --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>] [--client=<clientdir>] [--address=<addr>]
 	shocked-server -h | --help
 	shocked-server --version
 
@@ -30,6 +30,7 @@ Options:
 	--projects=<prjdir>   A path pointing to a directory containing the projects
 	--swagger=<swdir>     An optional path pointing to the Swagger UI resources
 	--client=<clientdir>  An optional path pointing to the client directory
+	--address=<addr>      The ip:port combination to listen on. Default: "localhost:8080".
 `
 }
 
@@ -49,8 +50,13 @@ func serveClient(container *restful.Container, localPath string) {
 
 func main() {
 	arguments, _ := docopt.Parse(usage(), nil, true, app.Title, false)
-	port := 8080
+	addressArg := arguments["--address"]
+	address := "localhost:8080"
 	log.Printf("Arguments: %v", arguments)
+
+	if addressArg != nil {
+		address = addressArg.(string)
+	}
 
 	source, srcErr := release.ReleaseFromDir(arguments["--source"].(string))
 	if srcErr != nil {
@@ -77,7 +83,7 @@ func main() {
 	if swDir != nil {
 		config := swagger.Config{
 			WebServices:     wsContainer.RegisteredWebServices(), // you control what services are visible
-			WebServicesUrl:  fmt.Sprintf("http://localhost:%d", port),
+			WebServicesUrl:  fmt.Sprintf("http://%s", address),
 			ApiPath:         "/apidocs.json",
 			ApiVersion:      "0.1",
 			SwaggerPath:     "/apidocs/",
@@ -85,7 +91,7 @@ func main() {
 		swagger.RegisterSwaggerService(config, wsContainer)
 	}
 
-	log.Printf("start listening on localhost:%d", port)
-	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: wsContainer}
+	log.Printf("start listening on <%s>", address)
+	server := &http.Server{Addr: address, Handler: wsContainer}
 	log.Fatal(server.ListenAndServe())
 }
