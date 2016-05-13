@@ -19,15 +19,17 @@ func usage() string {
 	return app.Title + `
 
 Usage:
-	shocked-server --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>] [--client=<clientdir>] [--address=<addr>]
+	shocked-server project --source=<srcdir> --projects=<prjdir> [--swagger=<swdir>] [--client=<clientdir>] [--address=<addr>]
+	shocked-server inplace --path=<datadir>... [--swagger=<swdir>] [--client=<clientdir>] [--address=<addr>]
 	shocked-server -h | --help
 	shocked-server --version
 
 Options:
 	-h --help             Show this screen.
 	--version             Show version.
-	--source=<srcdir>     A path pointing to the root of a System Shock source directory
+	--source=<srcdir>     A path pointing to the root of a System Shock source directory for projects
 	--projects=<prjdir>   A path pointing to a directory containing the projects
+	--path=<datadir>      A path to data directory for inplace modifications. Repeat option for multiple directories.
 	--swagger=<swdir>     An optional path pointing to the Swagger UI resources
 	--client=<clientdir>  An optional path pointing to the client directory
 	--address=<addr>      The ip:port combination to listen on. Default: "localhost:8080".
@@ -58,15 +60,35 @@ func main() {
 		address = addressArg.(string)
 	}
 
-	source, srcErr := release.ReleaseFromDir(arguments["--source"].(string))
-	if srcErr != nil {
-		log.Fatalf("Source is not available: %v", srcErr)
-		return
-	}
-	projects, prjErr := release.NewContainerFromDir(arguments["--projects"].(string))
-	if prjErr != nil {
-		log.Fatalf("Projects dir is not available: %v", prjErr)
-		return
+	var source release.Release
+	var projects release.ReleaseContainer
+
+	if arguments["project"].(bool) {
+		sourceArg := arguments["--source"]
+		projectsArg := arguments["--projects"]
+		var srcErr error
+		var prjErr error
+
+		source, srcErr = release.ReleaseFromDir(sourceArg.(string))
+		if srcErr != nil {
+			log.Fatalf("Source is not available: %v", srcErr)
+			return
+		}
+		projects, prjErr = release.NewContainerFromDir(projectsArg.(string))
+		if prjErr != nil {
+			log.Fatalf("Projects dir is not available: %v", prjErr)
+			return
+		}
+	} else if arguments["inplace"].(bool) {
+		pathArg := arguments["--path"]
+		var srcErr error
+
+		source, srcErr = release.FromAbsolutePaths(pathArg.([]string))
+		if srcErr != nil {
+			log.Fatalf("Source is not available: %v", srcErr)
+			return
+		}
+		projects = release.NewStaticReleaseContainer(map[string]release.Release{"(inplace)": source})
 	}
 
 	workspace := core.NewWorkspace(source, projects)
@@ -82,7 +104,7 @@ func main() {
 	swDir := arguments["--swagger"]
 	if swDir != nil {
 		config := swagger.Config{
-			WebServices:     wsContainer.RegisteredWebServices(), // you control what services are visible
+			WebServices:     wsContainer.RegisteredWebServices(),
 			WebServicesUrl:  fmt.Sprintf("http://%s", address),
 			ApiPath:         "/apidocs.json",
 			ApiVersion:      "0.1",
