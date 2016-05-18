@@ -162,7 +162,7 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Operation("setLevelTextures").
 		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
-		Reads([]string{}).
+		Reads([]int{}).
 		Writes(model.LevelTextures{}))
 
 	service2.Route(service2.GET("{project-id}/archive/levels/{level-id}/tiles").To(resource.getLevelTiles).
@@ -544,22 +544,16 @@ func (resource *WorkspaceResource) setLevelTextures(request *restful.Request, re
 	if err == nil {
 		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
 
-		var idStrings []string
-		err = request.ReadEntity(&idStrings)
+		var ids []int
+		err = request.ReadEntity(&ids)
 		if err != nil {
 			response.AddHeader("Content-Type", "text/plain")
 			response.WriteErrorString(http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		newIds := make([]int, len(idStrings))
-		for index, idString := range idStrings {
-			parsedID, _ := strconv.ParseInt(idString, 10, 16)
-			newIds[index] = int(parsedID)
-		}
-
 		level := project.Archive().Level(int(levelID))
-		level.SetTextures(newIds)
+		level.SetTextures(ids)
 
 		entity := resource.getLevelTexturesEntity(projectID, level)
 		response.WriteEntity(entity)
