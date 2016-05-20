@@ -202,6 +202,15 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
 		Writes(model.LevelObjects{}))
 
+	service2.Route(service2.POST("{project-id}/archive/levels/{level-id}/objects").To(resource.createLevelObject).
+		// docs
+		Doc("create a new level object").
+		Operation("createLevelObject").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("level-id", "identifier of the level").DataType("int")).
+		Reads(model.LevelObjectTemplate{}).
+		Writes(0))
+
 	container.Add(service2)
 
 	return resource
@@ -667,6 +676,41 @@ func (resource *WorkspaceResource) getLevelObjects(request *restful.Request, res
 		}
 
 		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
+// GET /projects/{project-id}/archive/levels/{level-id}/objects
+func (resource *WorkspaceResource) createLevelObject(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
+
+	if err == nil {
+		levelID, _ := strconv.ParseInt(request.PathParameter("level-id"), 10, 16)
+		level := project.Archive().Level(int(levelID))
+
+		entityTemplate := new(model.LevelObjectTemplate)
+		err = request.ReadEntity(entityTemplate)
+
+		if err != nil {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusBadRequest, err.Error())
+			return
+		}
+		var entity int
+		var addErr error
+
+		entity, addErr = level.AddObject(entityTemplate)
+		if addErr == nil {
+			response.WriteHeader(http.StatusCreated)
+			response.WriteEntity(entity)
+		} else {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusBadRequest, err.Error())
+		}
 	} else {
 		response.AddHeader("Content-Type", "text/plain")
 		response.WriteErrorString(http.StatusBadRequest, err.Error())
