@@ -701,10 +701,9 @@ func (resource *WorkspaceResource) createLevelObject(request *restful.Request, r
 			return
 		}
 		var entity int
-		var addErr error
 
-		entity, addErr = level.AddObject(entityTemplate)
-		if addErr == nil {
+		entity, err = level.AddObject(entityTemplate)
+		if err == nil {
 			response.WriteHeader(http.StatusCreated)
 			response.WriteEntity(entity)
 		} else {
