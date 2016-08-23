@@ -72,6 +72,14 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("palette-id", "identifier of the palette").DataType("string")).
 		Writes(model.Palette{}))
 
+	service2.Route(service2.GET("{project-id}/fonts/{font-id}").To(resource.getFont).
+		// docs
+		Doc("get font").
+		Operation("getFont").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("font-id", "identifier of the font").DataType("int")).
+		Writes(model.Font{}))
+
 	service2.Route(service2.GET("{project-id}/textures").To(resource.getTextures).
 		// docs
 		Doc("get textures").
@@ -304,6 +312,29 @@ func (resource *WorkspaceResource) encodePalette(out *[256]model.Color, palette 
 	}
 }
 
+// GET /projects/{project-id}/fonts/{font-id}
+func (resource *WorkspaceResource) getFont(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
+
+	if err == nil {
+		fontID, _ := strconv.ParseInt(request.PathParameter("font-id"), 10, 16)
+		var entity *model.Font
+
+		entity, err = project.Fonts().Font(res.ResourceID(fontID))
+		if err == nil {
+			response.WriteEntity(*entity)
+		} else {
+			response.AddHeader("Content-Type", "text/plain")
+			response.WriteErrorString(http.StatusBadRequest, err.Error())
+		}
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
+}
+
 // GET /projects/{project-id}/textures
 func (resource *WorkspaceResource) getTextures(request *restful.Request, response *restful.Response) {
 	projectID := request.PathParameter("project-id")
@@ -429,7 +460,7 @@ func (resource *WorkspaceResource) getTextureImageAsRaw(request *restful.Request
 		for row := 0; row < entity.Height; row++ {
 			pixel = append(pixel, bmp.Row(row)...)
 		}
-		entity.Pixel = base64.StdEncoding.EncodeToString(pixel)
+		entity.Pixels = base64.StdEncoding.EncodeToString(pixel)
 
 		response.WriteEntity(entity)
 	} else {
