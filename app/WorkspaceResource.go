@@ -141,6 +141,16 @@ func NewWorkspaceResource(container *restful.Container, workspace *core.Workspac
 		Param(service2.PathParameter("type", "identifier of the class").DataType("int")).
 		Writes(model.GameObject{}))
 
+	service2.Route(service2.GET("{project-id}/objects/{class}/{subclass}/{type}/icon/raw").To(resource.getObjectIconAsRaw).
+		// docs
+		Doc("get object icon as raw bitmap").
+		Operation("getObjectIconAsRaw").
+		Param(service2.PathParameter("project-id", "identifier of the project").DataType("string")).
+		Param(service2.PathParameter("class", "identifier of the class").DataType("int")).
+		Param(service2.PathParameter("subclass", "identifier of the class").DataType("int")).
+		Param(service2.PathParameter("type", "identifier of the class").DataType("int")).
+		Writes(model.RawBitmap{}))
+
 	service2.Route(service2.GET("{project-id}/archive/levels").To(resource.getLevels).
 		// docs
 		Doc("get level list").
@@ -774,4 +784,34 @@ func (resource *WorkspaceResource) objectEntity(project *core.Project, objID res
 	entity.Properties = project.GameObjects().Properties(objID)
 
 	return
+}
+
+// GET /projects/{project-id}/objects/{class}/{subclass}/{type}/icon/raw
+func (resource *WorkspaceResource) getObjectIconAsRaw(request *restful.Request, response *restful.Response) {
+	projectID := request.PathParameter("project-id")
+	project, err := resource.ws.Project(projectID)
+
+	if err == nil {
+		classID, _ := strconv.ParseInt(request.PathParameter("class"), 10, 8)
+		subclassID, _ := strconv.ParseInt(request.PathParameter("subclass"), 10, 8)
+		typeID, _ := strconv.ParseInt(request.PathParameter("type"), 10, 8)
+		objID := res.MakeObjectID(res.ObjectClass(classID), res.ObjectSubclass(subclassID), res.ObjectType(typeID))
+		bmp := project.GameObjects().Icon(objID)
+		var entity model.RawBitmap
+
+		entity.Width = int(bmp.ImageWidth())
+		entity.Height = int(bmp.ImageHeight())
+		var pixel []byte
+
+		for row := 0; row < entity.Height; row++ {
+			pixel = append(pixel, bmp.Row(row)...)
+		}
+		entity.Pixels = base64.StdEncoding.EncodeToString(pixel)
+
+		response.WriteEntity(entity)
+	} else {
+		response.AddHeader("Content-Type", "text/plain")
+		response.WriteErrorString(http.StatusBadRequest, err.Error())
+		return
+	}
 }
